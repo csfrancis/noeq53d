@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
@@ -77,7 +78,7 @@ func acceptAndServe(l net.Listener) {
 
 		go func() {
 			err := serve(cn, cn)
-			if err != io.EOF && err != nil {
+			if err != nil {
 				log.Println(err)
 			}
 			cn.Close()
@@ -90,8 +91,8 @@ func serve(r io.Reader, w io.Writer) error {
 	for {
 		// Wait for 2 byte request (num_ids, id_space)
 		_, err := io.ReadFull(r, c)
-		if err != nil {
-			return err
+		if err != nil && err == io.EOF {
+			return nil
 		}
 
 		if c[0] == 0 {
@@ -106,29 +107,16 @@ func serve(r io.Reader, w io.Writer) error {
 }
 
 func (n *NoEqd53Msg) Process() error {
-	b := make([]byte, uint32(n.num)*8)
 	for i := uint8(0); i < n.num; i++ {
 		id, err := nextId(&idSpacesSeq[n.space], &idSpacesMutex[n.space])
-
 		if err != nil {
 			return err
 		}
 
-		off := i * 8
-		b[off+0] = byte(id >> 56)
-		b[off+1] = byte(id >> 48)
-		b[off+2] = byte(id >> 40)
-		b[off+3] = byte(id >> 32)
-		b[off+4] = byte(id >> 24)
-		b[off+5] = byte(id >> 16)
-		b[off+6] = byte(id >> 8)
-		b[off+7] = byte(id)
-	}
-
-
-	_, err := n.writer.Write(b)
-	if err != nil {
-		return err
+		err = binary.Write(n.writer, binary.BigEndian, id)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
