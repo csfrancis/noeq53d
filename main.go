@@ -15,7 +15,6 @@ type NoEqd53Msg struct {
 	num    uint8
 	space  uint8
 	writer io.Writer
-	notify chan bool
 }
 
 var (
@@ -34,7 +33,7 @@ const (
 
 	// Mon, 17 Jun 2013 11:48:00.000 GMT
 	shepoch     = int64(1371487680000)
-	idSpacesNum = int(255)
+	idSpacesNum = int(256)
 )
 
 // Flags
@@ -46,31 +45,12 @@ var (
 
 var (
 	idSpacesSeq  [idSpacesNum]int64
-	idSpacesChan [idSpacesNum]chan *NoEqd53Msg
+	idSpacesMutex [idSpacesNum]sync.Mutex
 )
-
-func init() {
-	for i := range idSpacesChan {
-		idSpacesChan[i] = make(chan *NoEqd53Msg)
-	}
-}
 
 func main() {
 	parseFlags()
 	acceptAndServe(mustListen())
-}
-
-func startHandlers() {
-	for i := range idSpacesChan {
-		go func(c chan *NoEqd53Msg) {
-			for {
-				select {
-				case req := <-c:
-					processRequest(req)
-				}
-			}
-		}(idSpacesChan[i])
-	}
 }
 
 func parseFlags() {
@@ -96,8 +76,8 @@ func acceptAndServe(l net.Listener) {
 		}
 
 		go func() {
-			err := serve(cn, cn, nil)
-			if err != io.EOF {
+			err := serve(cn, cn)
+			if err != io.EOF && err != nil {
 				log.Println(err)
 			}
 			cn.Close()
@@ -105,11 +85,7 @@ func acceptAndServe(l net.Listener) {
 	}
 }
 
-var once sync.Once
-
-func serve(r io.Reader, w io.Writer, notify chan bool) error {
-	once.Do(startHandlers)
-
+func serve(r io.Reader, w io.Writer) error {
 	c := make([]byte, 2)
 	for {
 		// Wait for 2 byte request (num_ids, id_space)
@@ -118,27 +94,22 @@ func serve(r io.Reader, w io.Writer, notify chan bool) error {
 			return err
 		}
 
-		n := uint(c[0])
-		if n == 0 {
+		if c[0] == 0 {
 			return ErrInvalidRequest
 		}
 
-		idSpacesChan[c[1]] <- &NoEqd53Msg{c[0], c[1], w, notify}
+		n := &NoEqd53Msg{c[0], c[1], w}
+		n.Process()
 	}
 
 	panic("not reached")
 }
 
-func processRequest(req *NoEqd53Msg) error {
-	defer func() {
-		if req.notify != nil {
-			req.notify <- true
-		}
-	}()
+func (n *NoEqd53Msg) Process() error {
+	b := make([]byte, uint32(n.num)*8)
+	for i := uint8(0); i < n.num; i++ {
+		id, err := nextId(&idSpacesSeq[n.space], &idSpacesMutex[n.space])
 
-	b := make([]byte, uint32(req.num)*8)
-	for i := uint8(0); i < req.num; i++ {
-		id, err := nextId(&idSpacesSeq[req.space])
 		if err != nil {
 			return err
 		}
@@ -154,7 +125,8 @@ func processRequest(req *NoEqd53Msg) error {
 		b[off+7] = byte(id)
 	}
 
-	_, err := req.writer.Write(b)
+
+	_, err := n.writer.Write(b)
 	if err != nil {
 		return err
 	}
@@ -165,13 +137,15 @@ func milliseconds() int64 {
 	return time.Now().UnixNano() / 1e6
 }
 
-func nextId(seq *int64) (int64, error) {
+func nextId(seq *int64, lock *sync.Mutex) (int64, error) {
 	ts := milliseconds()
 
 	if ts < *lts {
 		return 0, fmt.Errorf("time is moving backwards, waiting until %d\n", *lts)
 	}
 
+	lock.Lock()
+	defer lock.Unlock()
 	if *lts == ts {
 		*seq = (*seq + 1) & sequenceMask
 		if *seq == 0 {
@@ -189,7 +163,7 @@ func nextId(seq *int64) (int64, error) {
 		panic("max timestamp value reached!")
 	}
 
-	id := ((ts - shepoch) << timestampLeftShift) |
+	id := (ts << timestampLeftShift) |
 		(*wid << workerIdShift) |
 		*seq
 
