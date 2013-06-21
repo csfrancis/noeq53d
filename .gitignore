@@ -6,3 +6,8 @@ a.out
 *.gz
 noeq53d
 noeq53d.test
+bin/
+debian/files
+debian/noeq53d.debhelper.log
+debian/noeq53d.substvars
+debian/noeq53d/

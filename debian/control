@@ -1,0 +1,17 @@
+# vim: ft=debcontrol
+
+Source: noeq53d
+Section: misc
+Priority: optional
+Maintainer: Scott Francis <scott.francis@shopify.com>
+Build-Depends: debhelper (>=8), golang (>=1-5)
+Standards-Version: 3.9.3
+
+Package: noeq53d
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Homepage: https://github.com/csfrancis/noeq53d
+Description:Fault-tolerant network service for meaningful GUID generation
+ Noqe53d is a fork of Noeqd that generates 53-bit ids that are compatible
+ with Javascript maximum int size
+
